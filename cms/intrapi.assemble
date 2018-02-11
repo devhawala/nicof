@@ -1,0 +1,514 @@
+*
+* INTRAPI.ASSEMBLE   - low-level access to assembler facilities from C
+*
+* This file is part of NICOF (Non-Invasive COmmunication Facility)
+* for VM/370 R6 "SixPack".
+*
+* However: this assembler implementation and the C header file should
+*          also be useful for other C programs.
+*
+* This module implements the routines of the low-level C-API to
+* CMS assembler macros allowing to:
+*
+*  - register a handling routine for external interrupts
+*  - enable/disable receiving external interrupts
+*  - use VMCF for communication with another virtual machine
+*
+*  - wait for and post ECBs
+*  - set timer for an interval and post an ECB on timeout
+*
+*  - register a handling routine for device interrupts
+*  - enable/disable receiving device interrupts
+*
+*  - create/modify CCWs and perform SIOs for a device
+*
+*
+* This software is provided "as is" in the hope that it will be useful,
+* with no promise, commitment or even warranty (explicit or implicit)
+* to be suited or usable for any particular purpose.
+* Using this software is at your own risk!
+*
+* Written by Dr. Hans-Walter Latz, Berlin (Germany), 2012,2014
+* Released to the public domain.
+*
+*
+* Entry point (named like the module to simply load the module)
+* -> issue CP command 'SET TIMER REAL' to prepare timeout waits
+         ENTRY INTRAPI
+* save registers and establish adressability via R12
+INTRAPI  CSECT
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING INTRAPI,R12
+* prepare timeout waits
+         LA    R6,CPCMD              R6  <- command
+         LA    R10,CPCMDL            R10 <- command length
+         DC    X'83',X'6A',XL2'0008' do DIAGx08
+* return ...
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+CPCMD    DC    C'SET TIMER REAL'
+CPCMDL   EQU   *-CPCMD
+*
+* --------------------------------------------------------------------
+*
+* ENTRY __INTR00 == diagx00(outbuf, buflen)
+*
+         ENTRY @@INTR00
+@@INTR00 DS    0H
+         STM   R14,R12,12(R13)
+         LR    R12,R15
+         USING @@INTR00,R12
+* put call data into registers
+         L     R6,0(R1)              R6  <- OUTPUT BUFFER ADDRESS
+         L     R10,4(R1)             R10 <- OUTPUT BUFFER LENGTH
+         DC    X'83',X'6A',XL2'0000' do DIAGx00
+* return ...
+         LM    R14,R12,12(R13)
+         SR    R15,R15        clear returncode
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY __INTRFF == diagx08(cpcmd, cpcmdlen)
+*
+         ENTRY @@INTRFF
+@@INTRFF DS    0H
+         STM   R14,R12,12(R13)
+         LR    R12,R15
+         USING @@INTRFF,R12
+* put call data into registers
+         L     R6,0(R1)              R6  <- CP CMD ADDRESS
+         L     R10,4(R1)             R10 <- CP CMD LENGTH
+         DC    X'83',X'6A',XL2'0008' do DIAGx08
+* return ...
+         LM    R14,R12,12(R13)
+         SR    R15,R15        clear returncode
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY __INTR01 == ENABLE_EXT(HANDLER,STACK,STACKLEN)
+*
+         ENTRY @@INTR01
+@@INTR01 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR01,R12
+* SAVE PARAMETER PTR (R1) TO R2, AS 'LINEDIT' DESTROYS R1
+         LR    R2,R1
+*
+* SAVE PARAMETERS TO OUR VARIABLES VIA R6 (USING R2)
+         L     R6,0(R2)
+         ST    R6,EXTHNDLC    'C' HANDLER ROUTINE
+         L     R6,4(R2)
+         ST    R6,EXTSTCK     STACK BEGIN
+         L     R6,8(R2)
+         ST    R6,EXTSTCKL    STACK LENGTH
+*
+* REGISTER OUR OWN HANDLER AND ENABLE EXTERNAL INTERRUPTS
+*????    SSM    =X'01'        ENABLE EXTERNAL INTERRUPTS
+         STCTL  R0,R0,WORK1   STORE CONTROL REGISTER ZERO
+         OI     WORK1+3,X'01' TURN ON BIT 31 (VMCF MASK)
+         LCTL   R0,R0,WORK1   RELOAD CONTROL REGISTER ZERO
+         HNDEXT SET,EXTHNDLR  REGISTER OUR (ASSEMBLER) EXT.HANDLER
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, CLEAR R15 (RC) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY @@INTR02 == DISABLE_EXT()
+*
+         ENTRY @@INTR02
+@@INTR02 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR02,R12
+*
+         HNDEXT CLR
+*????    SSM    =X'00'
+         STCTL  R0,R0,WORK1       STORE CONTROL REGISTER ZERO
+         NI     WORK1+3,X'FE'     TURN OFF BIT 31 (VMCF MASK)
+         LCTL   R0,R0,WORK1       RELOAD CONTROL REGISTER ZERO
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, SET R15 TO 0 AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY @@INTR10 == POST_ECB(*ECB)
+*
+         ENTRY @@INTR10
+@@INTR10 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR10,R12
+* SAVE PARAMETER PTR (R1) TO R2, AS 'LINEDIT' DESTROYS R1
+         LR    R2,R1
+*
+* DO THE WORK INTENDED
+         L     R6,0(R2)       R6 HAS NOW THE ADDRESS OF THE ECB
+         POST  (R6)           POST THE ECB R6 POINTS TO
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, SET R15 TO 0 AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY @@INTR11 == WAIT_ECB(*ECB)
+*
+         ENTRY @@INTR11
+@@INTR11 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR11,R12
+         LR    R2,R1          SAVE PARAMETER PTR (R1) TO R2
+         L     R6,0(R2)       R6 HAS NOW THE ADDRESS OF THE ECB
+         WAIT  ECB=(R6)       WAIT FOR THE ECB R6 POINTS TO
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, SET R15 TO 0 AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY @@INTR12 == WAIT_ANYECB(*ECBPTRLIST)
+* (LAST PTR IN LIST MUST HAVE THE HIGH ORDER BIT SET!)
+*
+         ENTRY @@INTR12
+@@INTR12 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR12,R12
+         LR    R2,R1          SAVE PARAMETER PTR (R1) TO R2
+         L     R6,0(R2)       R6 HAS NOW THE ADDRESS OF THE ECB LIST
+         WAIT  1,ECBLIST=(R6) WAIT FOR ONE OF THE ECBS R6 POINTS TO
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, SET R15 TO 0 AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* ENTRY @@INTR20 == VMCF_REQUEST(*PARAM)
+*
+         ENTRY @@INTR20
+@@INTR20 DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR20,R12
+         LR    R2,R1          SAVE PARAMETER PTR (R1) TO R2
+*
+* do the work intended
+         L     R11,0(R2)
+         L     R10,=X'11111111'
+         DC    X'83BA0068'    DIAG 68, R11=PARAMS, R10=RC
+         LR    R15,R10
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, SKIPPING R15(=RC) AND RETURN
+         L     R14,12(R13)
+         LM    R0,R12,20(R13)
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* REAL HANDLER FOR EXTERNAL INTERRUPTS
+*
+EXTHNDLR DS 0H
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING EXTHNDLR,R12
+*
+* SETUP 'C'-STACK: CHAIN SAVE AREAS
+         L     R2,EXTSTCK     GET THE 'C'-STACK FOR THE EXT.HANDLER
+         ST    R13,4(R2)      CHAIN FORWARD (CALLER'S SAVE AREA)
+         ST    R2,8(R13)      CHAIN BACKWARD (OUR SAVE AREA)
+         LR    R13,R2         ESTABLISH OUR AREA
+*
+* SETUP 'C'-STACK: PUT PARAMETER ON THE STACK AND SETUP POINTERS
+         USING CMSCRAB,R13
+         ST    R1,CONFILOU    SAVE THE CALL-PARAMETER ON THE STACK
+         LA    R1,CONFILIN    THE NEXT ELEMENT ON THE STACK ...
+         ST    R1,STACKNXT    ... AND PUT IT IN THE EXPECTED PLACE
+         LA    R1,CONFILOU    INDICATE THE PARAMETER LIST IN R1
+         ST    R13,GCCCRAB    ADDRESS OF (OUR) CRAB (HOPING THIS ALSO
+         DROP  R13            WORKS FOR A 'DETACHED' INTERRUPT STACK)
+*
+* INVOKE THE 'C'-EXT.HANDLER
+         L     R15,EXTHNDLC   MOVE ENTRY POINT TO R15
+         BALR  R14,R15        CALL THE HANDLER
+*
+* RESTORE R14 .. R12 FROM OUR SAVE AREA, CLEAR R15(=RC) AND RETURN
+         L     R13,4(R13)     RESTORE OUR OWN SAVE AREA FROM CHAIN
+         L     R14,12(R13)    RESTORE R14, OUR RETURN ADDRESS
+         LM    R0,R12,20(R13) RESTORE THE OTHER REGISTERS
+         SR    R15,R15        CLEAR R15
+         BR    R14
+         DROP  R12
+*
+* SET DEVICE INTERRUPT HANDLING C-ROUTINE AND C-STACK DATA
+         ENTRY @@INTR40
+@@INTR40 DS 0H
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR40,R12
+*
+* SAVE PARAMETERS (C-ROUTINE, STACK, STACKLEN) IN OUR LOCAL VARIABLES
+         L     R6,0(R1)
+         ST    R6,INTHNDLC    'C' HANDLER ROUTINE
+         L     R6,4(R1)
+         ST    R6,INTSTCK     STACK BEGIN
+         L     R6,8(R1)
+         ST    R6,INTSTCKL    STACK LENGTH
+*
+* DONE: RESTORE REGISTERS, CLEAR RETURNCODE (R15) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+*
+* SET THE ADDRESS OF THE (REAL) INTERRUPT HANDLER AN PLIST-OFFSET 16,
+* ISSUE SVC202 WITH THE PASSED PLIST, RETURNING IN R15 WETHER
+* IT WAS SUCCESSFULL (0) OR NOT (!=0)
+         ENTRY @@INTR41
+@@INTR41 DS 0H
+         STM   R14,R12,12(R13)
+         LR    R12,R15
+         USING @@INTR41,R12
+         L     R1,0(R1)       LOAD PLIST-START INTO R1
+         L     R2,=AL4(INTHNDLR) GET THE ADDRESS OF DEV INTR. HANDLER
+         ST    R2,16(R1)      AND STORE IT IN THE PLIST IN 4-TH WORD
+         DC    XL2'0ACA'      SVC202
+         DC    AL4(@@SVCERR)
+*
+* DONE: RESTORE REGISTERS, CLEAR RETURNCODE (R15) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+*
+* HANDLE SVC202 ERROR: SET RETURNCODE (R15) AND RETURN
+@@SVCERR DS 0H
+*        WRTERM 'ERROR ON SVC202'
+         LM    R14,R12,12(R13)
+         LR    R15,R14        SET RETURNCODE TO A NON-ZERO VALUE
+         BR    R14
+         DROP  R12
+*
+* DISABLE DEVICE INTERRUPT HANDLING FOR DEV 099
+         ENTRY @@INTR06
+@@INTR06 DS 0H
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR06,R12
+         HNDINT CLR,(D099)
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+*
+* --------------------------------------------------------------------
+*
+* REAL HANDLER FOR DEVICE ('INT') INTERRUPTS
+*
+         ENTRY INTHNDLR
+INTHNDLR DS 0H
+* ESTABLISH ADRESSABILITY VIA R12 AND SAVE RETURN ADDRESS (R14)
+         LR    R12,R15
+         USING INTHNDLR,R12
+         ST    R14,INTRTRN    SAVE OUR RETURN ADDRESS
+         LA    R13,INTSAVEA   SIMULATE A PASSED SAVE AREA
+*
+* SETUP 'C'-STACK: CHAIN SAVE AREAS
+         L     R11,INTSTCK    GET THE 'C'-STACK FOR THE INT.HANDLER
+         ST    R13,4(R11)     CHAIN FORWARD (CALLER'S SAVE AREA)
+         ST    R11,8(R13)     CHAIN BACKWARD (OUR SAVE AREA)
+         LR    R13,R11        ESTABLISH OUR AREA
+**
+**SETUP 'C'-STACK: CHAIN SAVE AREAS
+**       L     R13,INTSTCK    GET THE 'C'-STACK FOR THE INT.HANDLER
+**       SR    R11,R11        ZERO R11 TO ...
+**       ST    R11,0(R13)     ... CLEAR CHAINS, AS HNDINT ...
+**       ST    R11,4(R13)       ... DOES NOT PROVIDE A SAVE ...
+**       ST    R11,8(R13)        ... AREA FOR THE INT HANDLER.
+*
+* SETUP 'C'-STACK: PUT PARAMETERS ON THE STACK
+         USING CMSCRAB,R13
+         ST    R4,88(R13)     P1: DEVICE ADDRESS
+         ST    R0,92(R13)     P2: OLD-PSW, 1. WORD
+         ST    R1,96(R13)     P3: OLD-PSW, 2. WORD
+         ST    R2,100(R13)    P4: CSW, 1. WORD
+         ST    R3,104(R13)    P5: CSW, 2. WORD
+         LA    R2,112(R13)    PLACE BEHIND THE LAST PARAMETER
+         ST    R2,STACKNXT    WHERE THE GCC STACK BEGINS
+         ST    R13,GCCCRAB    ADDRESS OF CRAB (HOPING THIS WORKS FOR A
+         DROP  R13            FOR A 'DETACHED' INTERRUPT STACK)
+         LA    R1,88(R13)     INDICATE THE PARAMETER LIST
+*
+* INVOKE THE 'C'-INT.HANDLER
+         L     R15,INTHNDLC   LOAD ENTRY POINT TO R15
+         BALR  R14,R15        CALL THE HANDLER
+*
+* RESTORE R14 (R15 ALREADY CONTAINS THE RC FROM 'C') AND RETURN
+         L     R14,INTRTRN    RESTORE OUR RETURN ADDRESS
+         BR    R14
+         DROP  R12
+*
+* SET TIMER WITH WAIT INTERVAL AND ADDRESS OF ECB TO POST
+* (requires CP SET TIMER REAL to have been issued)
+         ENTRY @@INTR50
+@@INTR50 DS 0H
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR50,R12
+*
+* SAVE PARAMETERS (INTERVAL, ECB-ADDRESS) IN OUR LOCAL VARIABLES
+         L     R6,0(R1)
+         ST    R6,TMRINTV     WAIT INTERVAL IN 1/100 S
+         L     R6,4(R1)
+         ST    R6,TMRECB      ADDRESS OF ECB TO POST
+*
+* ARM UND START THE TIMER
+         STIMER REAL,TMRHNDL,BINTVL=TMRINTV
+*
+* DONE: RESTORE REGISTERS, CLEAR RETURNCODE (R15) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+*
+* RESET TIMER
+         ENTRY @@INTR51
+@@INTR51 DS 0H
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR51,R12
+*
+* DISARM THE TIMER
+         STIMER REAL,BINTVL=TMRNONE
+*
+* DONE: RESTORE REGISTERS, CLEAR RETURNCODE (R15) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+*
+*        STIMER EVENT ROUTINE FOR TIMEOUT HANDLING
+*
+TMRHNDL  DS 0H
+         STM   R14,R12,12(R13)
+         LR R12,R15
+         USING TMRHNDL,R12
+*
+         L     R6,TMRECB      LOAD ADDRESS OF ECB INTO R6
+         POST  (R6)           POST THAT ECB
+*
+* DONE: RESTORE REGISTERS, CLEAR RETURNCODE (R15) AND RETURN
+         LM    R14,R12,12(R13)
+         SR    R15,R15        CLEAR RETURNCODE
+         BR    R14
+         DROP  R12
+*
+* start of the literals area
+         DS 0F
+         LTORG
+*
+* DATA FOR THE 'C' EXTERNAL INTERRUPT HANDLER
+*
+         DS 0F
+EXTHNDLC DC A(0)              CURRENT HANDLER ROUTINE
+EXTSTCK  DC A(0)              THE STACK AREA FOR THE 'C' ROUTINE
+EXTSTCKL DC F'0'              THE LENGTH OF THE STACK AREA
+*
+* DATA FOR THE 'C' DEVICE ('INT') INTERRUPT HANDLER
+*
+         DS 0F
+INTSAVEA DC 18F'0'            SIMULATED SAVE AREA FOR THE INT.HANDLER
+INTRTRN  DC F'0'              THE RETURN ADDRESS FOR THE INT.HANDLER
+INTHNDLC DC A(0)              CURRENT HANDLER ROUTINE
+INTSTCK  DC A(0)              THE STACK AREA FOR THE 'C' ROUTINE
+INTSTCKL DC F'0'              THE LENGTH OF THE STACK AREA
+*
+* DATA FOR TIMER HANDLING
+*
+         DS 0F
+TMRECB   DC A(0)              ADDRESS OF THE ECB TO POST
+TMRINTV  DC F'0'              TIME INTERVAL TO WAIT
+TMRNONE  DC F'0'              VALUE TO RESET TIMER
+*
+* OTHER DATA
+         DS 0D                ALIGN TO DOUBLEWORD ADDRESS
+WORK1    DS 1D                WORK AREA FOR CONTROL REG. MANIPULATION
+*
+* DO A SIO: RC <- SIO(DEV-ADDR, CCW-ADDR)
+         ENTRY @@INTR30
+@@INTR30 DS 0H
+*
+* SAVE REGISTERS AND ESTABLISH ADRESSABILITY VIA R12
+         STM R14,R12,12(R13)
+         LR R12,R15
+         USING @@INTR30,R12
+*
+* LOAD DEVICE ADDRESS (PARAMETER 1) INTO R6
+         L     R6,0(R1)
+*
+* LOAD CCW-CHAIN ADDR. (PARAMETER 2) INTO R7 AND STORE IN ABS ADDR. 72
+         L     R7,4(R1)
+         SR    R8,R8          CLEAR R8 AS BASE REGISTER
+         ST    R7,72(R8)      STORE R7 AT OFFSET 72 FROM ADDR. 0 (=R8)
+*
+* DO THE 'SIO' FOR THE DEVICE AND SET RC (R15) ACCORDINGLY
+         SR    R15,R15        SET RC = 0
+         SIO   0(R6)          DO THE SIO WITH DEV.ADDR IN R6
+         BC    B'1000',@I30END SUCCESS => RC = 0
+         BC    B'0100',@I30S1 CSW WAS STORED => RC 1
+         BC    B'0010',@I30S2 (SUB)CHANNEL BUSY / INTR. PENDING => RC 2
+         BC    B'0001',@I30S3 NOT OPERATIONAL => RC 3
+         LA    R15,4(R15)     SET RC = 4
+         B     @I30END        OTHERS: UNKNOWN => RC 4
+*
+@I30S1   LA    R15,1(R15)     SET RC = 1
+         B     @I30END
+*
+@I30S2   LA    R15,2(R15)     SET RC = 2
+         B     @I30END
+*
+@I30S3   LA    R15,3(R15)     SET RC = 3
+*
+* RESTORE REGISTERS AND RETURN WITH RETURNCODE (IN R15)
+@I30END  L R14,12(R13)        RESTORE R14 FROM SAVE AREA
+         LM R0,R12,20(R13)    AND RESTORE THE REMAINING REGISTERS
+         BR R14               DONE: RETURN TO CALLER
+*
+* define registers etc.
+         REGEQU
+         CMSCRAB
+         COPY     VMCBLOKS
+*
+* end of compilation unit
+         END

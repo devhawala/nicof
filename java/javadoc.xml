@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<project default="javadoc">
+    <target name="javadoc">
+        <javadoc access="package" author="true" classpath="." destdir="doc" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" packagenames="dev.hawala.vm370.ebcdic,dev.hawala.vm370.commproxy,dev.hawala.vm370" source="1.6" sourcepath="src" splitindex="true" use="true" version="true"/>
+    </target>
+</project>

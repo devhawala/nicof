@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="WINDOWS-1252" standalone="no"?>
+<jardesc>
+    <jar path="Vm370CommProxy/nicof.jar"/>
+    <options buildIfNeeded="true" compress="true" descriptionLocation="/Vm370CommProxy/nicof_jar.jardesc" exportErrors="false" exportWarnings="true" includeDirectoryEntries="false" overwrite="false" saveDescription="true" storeRefactorings="false" useSourceFolders="false"/>
+    <storedRefactorings deprecationInfo="true" structuralOnly="false"/>
+    <selectedProjects/>
+    <manifest generateManifest="false" manifestLocation="/Vm370CommProxy/nicof.manifest" manifestVersion="1.0" reuseManifest="false" saveManifest="true" usesManifest="true">
+        <sealing sealJar="false">
+            <packagesToSeal/>
+            <packagesToUnSeal/>
+        </sealing>
+    </manifest>
+    <selectedElements exportClassFiles="true" exportJavaFiles="false" exportOutputFolder="false">
+        <file path="/Vm370CommProxy/src/nicof_logging.properties"/>
+        <javaElement handleIdentifier="=Vm370CommProxy/src&lt;dev.hawala.vm370.ebcdic"/>
+        <javaElement handleIdentifier="=Vm370CommProxy/src&lt;dev.hawala.vm370"/>
+        <javaElement handleIdentifier="=Vm370CommProxy/src&lt;dev.hawala.vm370.commproxy.socketapi"/>
+        <javaElement handleIdentifier="=Vm370CommProxy/src&lt;dev.hawala.vm370.commproxy"/>
+    </selectedElements>
+    <fatjar builder="org.eclipse.jdt.ui.plain_jar_builder" launchConfig=""/>
+</jardesc>
